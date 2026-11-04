@@ -1,0 +1,422 @@
+
+<!-- ============================================================
+     SUPABASE PORTFOLIO CONTENT LOADER
+     Keep this block immediately before </body> in index.html.
+     ============================================================ -->
+<script>
+(() => {
+  'use strict';
+
+  // ---------- SUPABASE CONFIGURATION ----------
+  const SUPABASE_URL =
+    'https://wgqrdgtobqvmosneiirq.supabase.co';
+
+  const SUPABASE_ANON_KEY =
+    'sb_publishable_lWATZG_8PSm0WDSRdOZb8A_7-BMbGeP';
+
+  if (
+    !/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(SUPABASE_URL) ||
+    !SUPABASE_ANON_KEY.startsWith('sb_publishable_')
+  ) {
+    console.error('Supabase configuration is missing or invalid.');
+    return;
+  }
+
+  const BASE = SUPABASE_URL;
+
+  const HEADERS = {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: 'Bearer ' + SUPABASE_ANON_KEY
+  };
+
+  const ORDER = 'order=sort_order.asc,created_at.asc';
+
+  // ---------- HELPERS ----------
+  const esc = value =>
+    String(value ?? '').replace(/[&<>"']/g, char => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[char]));
+
+  const safeUrl = value =>
+    /^https?:\/\//i.test(value || '') ? value : '';
+
+  const get = async query => {
+    const response = await fetch(
+      `${BASE}/rest/v1/${query}`,
+      { headers: HEADERS }
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Supabase request failed: ${response.status} ${await response.text()}`
+      );
+    }
+
+    return response.json();
+  };
+
+  const publicFile = (bucket, path) => {
+    if (!path) return '';
+
+    return `${BASE}/storage/v1/object/public/${bucket}/` +
+      String(path).split('/').map(encodeURIComponent).join('/');
+  };
+
+  const section = id =>
+    document.querySelector(`[data-sec="${id}"]`);
+
+  // ---------- NAME MATCHING ----------
+  const normalize = value =>
+    String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9+#]/g, '');
+
+  const languageAliases = {
+    cpp: ['cpp', 'c++', 'cplusplus'],
+    c: ['c'],
+    python: ['python', 'py'],
+    java: ['java'],
+    javascript: ['javascript', 'js'],
+    html: ['html'],
+    css: ['css'],
+    kotlin: ['kotlin'],
+    csharp: ['csharp', 'c#']
+  };
+
+  const matchesLanguage = (skill, language) => {
+    const a = normalize(skill);
+    const b = normalize(language);
+
+    if (!a || !b) return false;
+    if (a === b) return true;
+
+    return Object.values(languageAliases).some(group =>
+      group.includes(a) && group.includes(b)
+    );
+  };
+
+  // ---------- CSS ----------
+  const style = document.createElement('style');
+
+  style.textContent = `
+    .cms-img {
+      display: block;
+      width: 100%;
+      max-height: 220px;
+      object-fit: cover;
+      border: 1px solid var(--line);
+      margin: 0 0 12px;
+    }
+
+    .cms-skill-heading {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .cms-skill-heading h3 {
+      margin: 0;
+    }
+
+    .cms-skill-logo {
+      display: block;
+      width: 30px;
+      height: 30px;
+      object-fit: contain;
+      flex-shrink: 0;
+    }
+
+    .cms-vault {
+      margin: 26px 0 8px;
+    }
+
+    .cms-det {
+      margin: 0 0 12px;
+      border: 1px solid var(--line);
+    }
+
+    .cms-det summary {
+      cursor: pointer;
+      padding: 9px 12px;
+      font: 500 .72rem/1 var(--mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--gold);
+    }
+
+    .cms-det pre {
+      margin: 0;
+      padding: 12px;
+      overflow: auto;
+      max-height: 280px;
+      font: 400 .78rem/1.5 var(--mono);
+      color: var(--foam);
+      background: rgba(0,0,0,.35);
+      border-top: 1px solid var(--line);
+      white-space: pre;
+    }
+
+    .item .go + .go {
+      margin-left: 14px;
+    }
+  `;
+
+  document.head.appendChild(style);
+
+  // ---------- SKILLS ----------
+  // Logos appear ONLY in the right-hand Skills panel.
+
+  const renderSkills = (skills, languages) => {
+    const box = section('skills');
+
+    if (!box || !skills.length) return;
+
+    box.querySelectorAll('.sk').forEach(element =>
+      element.remove()
+    );
+
+    const html = skills.map(skill => {
+      const level = Math.max(
+        0,
+        Math.min(100, Number(skill.level) || 0)
+      );
+
+      const language = languages.find(lang =>
+        matchesLanguage(skill.name, lang.name) ||
+        (
+          lang.prefix &&
+          normalize(skill.name) === normalize(lang.prefix)
+        )
+      );
+
+      const logoUrl = language?.logo_path
+        ? publicFile('language-logos', language.logo_path)
+        : '';
+
+      const logo = logoUrl
+        ? `
+          <img
+            class="cms-skill-logo"
+            src="${esc(logoUrl)}"
+            alt="${esc(skill.name)} logo"
+            loading="lazy"
+            onerror="this.style.display='none'"
+          >
+        `
+        : '';
+
+      return `
+        <div class="sk">
+          <div class="row">
+            <div class="cms-skill-heading">
+              ${logo}
+              <h3>${esc(skill.name)}</h3>
+            </div>
+            <span class="pct">${level}%</span>
+          </div>
+
+          <p>${esc(skill.description)}</p>
+
+          <div class="meter">
+            <i style="--p:${level}%"></i>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    box.insertAdjacentHTML('beforeend', html);
+  };
+
+  // ---------- PROJECTS ----------
+  const renderProjects = (rows, programs) => {
+    const box = section('projects');
+
+    if (!box) return;
+
+    if (rows.length) {
+      box.querySelectorAll('.item').forEach(element =>
+        element.remove()
+      );
+
+      const html = rows.map((project, index) => {
+        const url = safeUrl(project.url);
+
+        const technologies = Array.isArray(project.tech)
+          ? project.tech
+          : [];
+
+        return `
+          <div class="item">
+            <div class="tag">
+              ${String(index + 1).padStart(2, '0')}
+              ${project.category
+                ? ' · ' + esc(project.category.toUpperCase())
+                : ''}
+            </div>
+
+            <h3>${esc(project.title)}</h3>
+
+            ${project.image_path
+              ? `
+                <img
+                  class="cms-img"
+                  src="${esc(publicFile('project-images', project.image_path))}"
+                  alt="${esc(project.title)}"
+                  loading="lazy"
+                >
+              `
+              : ''}
+
+            <p>${esc(project.description)}</p>
+
+            ${technologies.length
+              ? `
+                <div class="tags">
+                  ${technologies.map(tech =>
+                    `<span>${esc(tech)}</span>`
+                  ).join('')}
+                </div>
+              `
+              : ''}
+
+            ${url
+              ? `
+                <a
+                  class="go"
+                  href="${esc(url)}"
+                  target="_blank"
+                  rel="noopener"
+                >View ↗</a>
+              `
+              : ''}
+          </div>
+        `;
+      }).join('');
+
+      box.insertAdjacentHTML('beforeend', html);
+    }
+
+    // ---------- CODE VAULT ----------
+    if (programs.length) {
+      const vault = programs.map(program => {
+        const files = (
+          Array.isArray(program.attachments)
+            ? program.attachments
+            : []
+        ).map(file => `
+          <a
+            class="go"
+            href="${esc(publicFile('program-files', file.path))}"
+            target="_blank"
+            rel="noopener"
+            download
+          >${esc(file.name || 'Download')} ↓</a>
+        `).join('');
+
+        return `
+          <div class="item">
+            <div class="tag">
+              ${esc(program.code_id)}
+              · ${esc((program.languages?.name || '').toUpperCase())}
+              · ${esc(String(program.difficulty || '').toUpperCase())}
+            </div>
+
+            <h3>${esc(program.title)}</h3>
+            <p>${esc(program.description)}</p>
+
+            ${program.code
+              ? `
+                <details class="cms-det">
+                  <summary>Code</summary>
+                  <pre>${esc(program.code)}</pre>
+                </details>
+              `
+              : ''}
+
+            ${program.output
+              ? `
+                <details class="cms-det">
+                  <summary>Output</summary>
+                  <pre>${esc(program.output)}</pre>
+                </details>
+              `
+              : ''}
+
+            ${files}
+          </div>
+        `;
+      }).join('');
+
+      box.insertAdjacentHTML(
+        'beforeend',
+        `<p class="kick cms-vault">CODE VAULT</p>${vault}`
+      );
+    }
+  };
+
+  // ---------- FETCH ALL CONTENT ----------
+  const requests = [
+    get(`skills?select=name,description,level&published=eq.true&${ORDER}`),
+
+    get(`languages?select=name,prefix,description,logo_path&published=eq.true&${ORDER}`),
+
+    get(`projects?select=title,category,description,tech,url,image_path&published=eq.true&${ORDER}`),
+
+    get('programs?select=code_id,title,description,difficulty,code,output,attachments,languages(name)&published=eq.true&order=code_id.asc')
+  ];
+
+  Promise.allSettled(requests).then(results => {
+    const [skillResult, languageResult, projectResult, programResult] =
+      results;
+
+    const data = result =>
+      result.status === 'fulfilled' && Array.isArray(result.value)
+        ? result.value
+        : [];
+
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        console.error(
+          `Supabase request ${index + 1} failed:`,
+          result.reason
+        );
+      }
+    });
+
+    try {
+      const skills = data(skillResult);
+      const languages = data(languageResult);
+      const projects = data(projectResult);
+      const programs = data(programResult);
+
+      console.log('Supabase content loaded:', {
+        skills: skills.length,
+        languages: languages.length,
+        projects: projects.length,
+        programs: programs.length
+      });
+
+      console.log(
+        'Language logo paths:',
+        languages.map(lang => ({
+          name: lang.name,
+          logo_path: lang.logo_path,
+          published: true
+        }))
+      );
+
+      renderSkills(skills, languages);
+      renderProjects(projects, programs);
+
+    } catch (error) {
+      console.error('Portfolio content rendering failed:', error);
+    }
+  });
+
+})();
+</script>

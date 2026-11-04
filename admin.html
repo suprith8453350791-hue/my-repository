@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Portfolio Admin</title>
+<style>
+:root{--bg:#041219;--card:#0a2b3a;--fg:#e8f1f1;--muted:#8ea8ae;--gold:#f2b24a;--bad:#ff6b5e;--line:rgba(217,242,239,.16);color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding:0 16px}
+main{max-width:920px;margin:0 auto;padding:20px 0 60px}h1{font-size:1.2rem;margin:0}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+nav{display:flex;gap:6px;flex-wrap:wrap;margin:16px 0}
+button,.btn{font:inherit;padding:8px 14px;border:1px solid var(--line);border-radius:4px;background:transparent;color:var(--fg);cursor:pointer}
+button:hover{border-color:var(--gold)}button.on,button.gold{background:var(--gold);border-color:var(--gold);color:#1a1204}button.bad{color:var(--bad)}
+input,textarea,select{width:100%;font:inherit;padding:9px 10px;background:#06202b;color:var(--fg);border:1px solid var(--line);border-radius:4px}
+textarea{min-height:90px;resize:vertical}textarea.code{min-height:200px;font:13px/1.45 ui-monospace,Menlo,monospace}
+label{display:block;margin:12px 0 4px;color:var(--muted);font-size:.8rem;letter-spacing:.05em;text-transform:uppercase}
+input[type=checkbox]{width:auto;margin-right:8px}.chk{display:flex;align-items:center;margin-top:14px}.chk label{margin:0;text-transform:none;font-size:.95rem;color:var(--fg)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:16px;margin-bottom:12px}
+.row{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.row .acts{display:flex;gap:6px;flex-wrap:wrap}
+.badge{font-size:.7rem;padding:2px 8px;border:1px solid var(--line);border-radius:99px;color:var(--muted);margin-left:8px}.badge.live{color:#3ddc97;border-color:#3ddc97}
+.muted{color:var(--muted);font-size:.85rem}#msg{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));background:#000;border:1px solid var(--line);padding:10px 16px;border-radius:4px;max-width:90vw}
+#msg.err{border-color:var(--bad);color:var(--bad)}.files div{display:flex;gap:8px;align-items:center;margin:4px 0;font-size:.85rem}
+.login{max-width:380px;margin:12vh auto 0}[hidden]{display:none!important}
+</style></head><body><main>
+<section id="login" class="login card" hidden>
+  <h1>Admin sign in</h1>
+  <label for="em">Email</label><input id="em" type="email" autocomplete="username">
+  <label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password">
+  <p><button class="gold" id="go" type="button">Sign in</button></p>
+  <p class="muted" id="cfg" hidden>Set SUPABASE_URL and SUPABASE_ANON_KEY at the top of this file's script first.</p>
+</section>
+<section id="app" hidden>
+  <header><h1>Portfolio Admin</h1><div><span class="muted" id="who"></span> <button id="out" type="button">Sign out</button></div></header>
+  <nav id="tabs"></nav>
+  <div id="view"></div>
+</section>
+<div id="msg" hidden></div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+/* >>> PASTE YOUR VALUES HERE (Supabase Dashboard > Project Settings > API) <<< */
+const SUPABASE_URL = 'https://wgqrdgtobqvmosneiirq.supabase.co';           // e.g. https://abcdxyz.supabase.co
+const SUPABASE_ANON_KEY = 'sb_publishable_lWATZG_8PSm0WDSRdOZb8A_7-BMbGeP';  // anon public key only; never the service_role key
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const configured = /^https:\/\/[^/]+\.supabase\.co\/?$/.test(SUPABASE_URL) && !/^YOUR_/.test(SUPABASE_ANON_KEY);
+const sb = configured && window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+let langs = [], tab = 'projects', editing = null;
+
+const SORT = { k: 'sort_order', t: 'number', l: 'Sort order (small first)' }, PUB = { k: 'published', t: 'check', l: 'Published (visible on the public site)' };
+const ENT = {
+  projects: { table: 'projects', label: 'Projects', title: r => r.title, sub: r => r.category || '', order: ['sort_order', 'created_at'],
+    fields: [{ k: 'title', t: 'text', l: 'Title', req: 1 }, { k: 'category', t: 'text', l: 'Category (e.g. WEB, ARDUINO)' }, { k: 'description', t: 'textarea', l: 'Description' },
+      { k: 'tech', t: 'tags', l: 'Technologies (comma separated)' }, { k: 'url', t: 'url', l: 'Link (https://...)' },
+      { k: 'image_path', t: 'file', l: 'Thumbnail / image', bucket: 'project-images', accept: 'image/jpeg,image/png,image/webp,image/gif' }, SORT, PUB] },
+  languages: { table: 'languages', label: 'Languages', title: r => r.name, sub: r => r.prefix, order: ['sort_order', 'name'],
+    fields: [{ k: 'name', t: 'text', l: 'Name (e.g. C++)', req: 1 }, { k: 'prefix', t: 'text', l: 'ID prefix (A-Z/0-9, e.g. CPP)', req: 1, upper: 1 }, { k: 'description', t: 'textarea', l: 'Short description' },
+      { k: 'logo_path', t: 'file', l: 'Logo / icon', bucket: 'language-logos', accept: 'image/jpeg,image/png,image/webp,image/svg+xml' }, SORT, PUB] },
+  skills: { table: 'skills', label: 'Skills', title: r => r.name, sub: r => r.level + '%', order: ['sort_order', 'created_at'],
+    fields: [{ k: 'name', t: 'text', l: 'Name', req: 1 }, { k: 'description', t: 'text', l: 'Description' }, { k: 'level', t: 'number', l: 'Level (0-100)', min: 0, max: 100 }, SORT, PUB] },
+  programs: { table: 'programs', label: 'Code Vault', select: '*, languages(name)', title: r => `${r.code_id} · ${r.title}`, sub: r => `${r.languages ? r.languages.name : ''} · ${r.difficulty}`, order: ['created_at'],
+    fields: [{ k: 'language_id', t: 'lang', l: 'Language', req: 1 }, { k: 'title', t: 'text', l: 'Title', req: 1 }, { k: 'description', t: 'textarea', l: 'Description' },
+      { k: 'difficulty', t: 'select', l: 'Difficulty', opts: ['easy', 'medium', 'hard'] }, { k: 'code', t: 'textarea', l: 'Code', cls: 'code' }, { k: 'output', t: 'textarea', l: 'Output' },
+      { k: 'attachments', t: 'files', l: 'Attachments / downloadable files', bucket: 'program-files' }, PUB] }
+};
+
+function msg(t, err) { const m = $('#msg'); m.textContent = t; m.className = err ? 'err' : ''; m.hidden = false; clearTimeout(msg.t); msg.t = setTimeout(() => m.hidden = true, 5000); }
+const upload = async (bucket, file) => {
+  const path = `${crypto.randomUUID()}-${file.name.replace(/[^\w.\-]+/g, '_')}`;
+  const { error } = await sb.storage.from(bucket).upload(path, file, { contentType: file.type || undefined, upsert: false });
+  if (error) throw error; return path;
+};
+const rmFiles = async (bucket, paths) => { paths = paths.filter(Boolean); if (paths.length) await sb.storage.from(bucket).remove(paths); };
+
+/* ---------- auth ---------- */
+async function gate() {
+  $('#login').hidden = true; $('#app').hidden = true;
+  if (!sb) { $('#login').hidden = false; $('#cfg').hidden = false; return; }
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { $('#login').hidden = false; return; }
+  const { data, error } = await sb.from('admins').select('user_id').eq('user_id', session.user.id).maybeSingle();
+  if (error || !data) { await sb.auth.signOut(); $('#login').hidden = false; msg('This account is not an administrator.', 1); return; }
+  $('#who').textContent = session.user.email; $('#app').hidden = false;
+  const l = await sb.from('languages').select('id,name,prefix').order('name'); langs = l.data || [];
+  drawTabs(); show();
+}
+$('#go').onclick = async () => {
+  if (!sb) return;
+  const { error } = await sb.auth.signInWithPassword({ email: $('#em').value.trim(), password: $('#pw').value });
+  $('#pw').value = ''; if (error) return msg(error.message, 1); gate();
+};
+$('#pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('#go').click(); });
+$('#out').onclick = async () => { await sb.auth.signOut(); gate(); };
+
+/* ---------- UI ---------- */
+function drawTabs() {
+  $('#tabs').innerHTML = Object.keys(ENT).map(k => `<button type="button" data-t="${k}" class="${k === tab ? 'on' : ''}">${ENT[k].label}</button>`).join('');
+  $('#tabs').querySelectorAll('button').forEach(b => b.onclick = () => { tab = b.dataset.t; editing = null; drawTabs(); show(); });
+}
+async function show() {
+  const E = ENT[tab], v = $('#view');
+  if (editing) return form(E);
+  let q = sb.from(E.table).select(E.select || '*'); E.order.forEach(o => q = q.order(o, { ascending: true }));
+  const { data, error } = await q; if (error) return msg(error.message, 1);
+  v.innerHTML = `<p><button class="gold" id="new" type="button">+ Add ${esc(E.label)}</button></p>` + (data.length ? '' : '<p class="muted">Nothing here yet.</p>') +
+    data.map(r => `<div class="card row"><div><strong>${esc(E.title(r))}</strong><span class="badge ${r.published ? 'live' : ''}">${r.published ? 'published' : 'draft'}</span><div class="muted">${esc(E.sub(r))}</div></div>
+      <div class="acts"><button data-a="edit" data-id="${r.id}" type="button">Edit</button><button data-a="pub" data-id="${r.id}" type="button">${r.published ? 'Unpublish' : 'Publish'}</button><button class="bad" data-a="del" data-id="${r.id}" type="button">Delete</button></div></div>`).join('');
+  $('#new').onclick = () => { editing = {}; show(); };
+  v.querySelectorAll('[data-a]').forEach(b => b.onclick = async () => {
+    const r = data.find(x => x.id === b.dataset.id), a = b.dataset.a;
+    if (a === 'edit') { editing = r; return show(); }
+    if (a === 'pub') { const { error } = await sb.from(E.table).update({ published: !r.published }).eq('id', r.id); if (error) return msg(error.message, 1); return show(); }
+    if (!confirm(`Delete "${E.title(r)}"? This cannot be undone.`)) return;
+    const { error } = await sb.from(E.table).delete().eq('id', r.id); if (error) return msg(error.message, 1);
+    for (const f of E.fields) { if (f.t === 'file') await rmFiles(f.bucket, [r[f.k]]); if (f.t === 'files') await rmFiles(f.bucket, (r[f.k] || []).map(x => x.path)); }
+    msg('Deleted.'); show();
+  });
+}
+function form(E) {
+  const r = editing, isNew = !r.id;
+  const html = E.fields.map(f => {
+    const val = r[f.k], id = 'f_' + f.k;
+    if (f.t === 'check') return `<div class="chk"><input id="${id}" type="checkbox" ${(isNew ? f.k === 'published' && tab !== 'projects' && tab !== 'programs' : val) ? 'checked' : ''}><label for="${id}">${esc(f.l)}</label></div>`;
+    let inp;
+    if (f.t === 'textarea') inp = `<textarea id="${id}" class="${f.cls || ''}">${esc(val)}</textarea>`;
+    else if (f.t === 'select') inp = `<select id="${id}">${f.opts.map(o => `<option ${o === (val || 'easy') ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+    else if (f.t === 'lang') inp = `<select id="${id}" ${f.req ? 'required' : ''}><option value="">Choose…</option>${langs.map(l => `<option value="${l.id}" ${l.id === val ? 'selected' : ''}>${esc(l.name)} (${esc(l.prefix)})</option>`).join('')}</select>`;
+    else if (f.t === 'file') inp = `${val ? `<div class="muted">Current: ${esc(val)} (choosing a new file replaces it)</div>` : ''}<input id="${id}" type="file" accept="${f.accept || ''}">`;
+    else if (f.t === 'files') inp = `<div class="files" id="ex_${f.k}">${(val || []).map((x, i) => `<div><input type="checkbox" data-rm="${i}"> remove: ${esc(x.name)}</div>`).join('')}</div><input id="${id}" type="file" multiple>`;
+    else inp = `<input id="${id}" type="${f.t === 'tags' ? 'text' : f.t}" value="${esc(f.t === 'tags' ? (val || []).join(', ') : (val ?? (f.t === 'number' ? (f.k === 'level' ? 50 : 0) : '')))}" ${f.req ? 'required' : ''} ${f.min != null ? `min="${f.min}" max="${f.max}"` : ''}>`;
+    return `<label for="${id}">${esc(f.l)}</label>${inp}`;
+  }).join('');
+  $('#view').innerHTML = `<div class="card"><h1>${isNew ? 'New' : 'Edit'} ${esc(E.label)}</h1>${!isNew && r.code_id ? `<p class="muted">Program ID: <strong>${esc(r.code_id)}</strong> (assigned automatically, cannot change)</p>` : ''}${html}
+    <p><button class="gold" id="save" type="button">Save</button> <button id="cancel" type="button">Cancel</button></p></div>`;
+  $('#cancel').onclick = () => { editing = null; show(); };
+  $('#save').onclick = async () => {
+    const btn = $('#save'); btn.disabled = true; const newlyUploaded = [], removeAfter = [];
+    try {
+      const row = {};
+      for (const f of E.fields) {
+        const el = $('#f_' + f.k);
+        if (f.t === 'check') row[f.k] = el.checked;
+        else if (f.t === 'number') row[f.k] = el.value === '' ? 0 : +el.value;
+        else if (f.t === 'tags') row[f.k] = el.value.split(',').map(s => s.trim()).filter(Boolean);
+        else if (f.t === 'file') {
+          row[f.k] = r[f.k] || null;
+          if (el.files[0]) { const p = await upload(f.bucket, el.files[0]); newlyUploaded.push([f.bucket, p]); if (r[f.k]) removeAfter.push([f.bucket, r[f.k]]); row[f.k] = p; }
+        } else if (f.t === 'files') {
+          const keep = (r[f.k] || []).filter((x, i) => !document.querySelector(`#ex_${f.k} [data-rm="${i}"]`).checked);
+          (r[f.k] || []).forEach(x => { if (!keep.includes(x)) removeAfter.push([f.bucket, x.path]); });
+          for (const file of el.files) { const p = await upload(f.bucket, file); newlyUploaded.push([f.bucket, p]); keep.push({ path: p, name: file.name }); }
+          row[f.k] = keep;
+        } else { let v = el.value.trim(); if (f.upper) v = v.toUpperCase(); if (f.req && !v) throw new Error(`${f.l} is required.`); row[f.k] = v === '' && f.t === 'url' ? null : v; }
+      }
+      if (row.url && !/^https?:\/\//i.test(row.url)) throw new Error('Link must start with http:// or https://');
+      const { error } = isNew ? await sb.from(E.table).insert(row) : await sb.from(E.table).update(row).eq('id', r.id);
+      if (error) throw error;
+      for (const [b, p] of removeAfter) await rmFiles(b, [p]);
+      msg('Saved.'); editing = null; if (tab === 'languages') { const l = await sb.from('languages').select('id,name,prefix').order('name'); langs = l.data || []; } show();
+    } catch (e) {
+      for (const [b, p] of newlyUploaded) await rmFiles(b, [p]);
+      msg(e.message || String(e), 1); btn.disabled = false;
+    }
+  };
+}
+gate();
+</script></body></html>
