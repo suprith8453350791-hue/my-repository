@@ -46,7 +46,7 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const configured = /^https:\/\/[^/]+\.supabase\.co\/?$/.test(SUPABASE_URL) && !/^YOUR_/.test(SUPABASE_ANON_KEY);
 const sb = configured && window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
-let langs = [], tab = 'projects', editing = null;
+let langs = [], projects = [], skills = [], tab = 'projects', editing = null;
 
 const SORT = { k: 'sort_order', t: 'number', l: 'Sort order (small first)' }, PUB = { k: 'published', t: 'check', l: 'Published (visible on the public site)' };
 const ENT = {
@@ -59,8 +59,8 @@ const ENT = {
       { k: 'logo_path', t: 'file', l: 'Logo / icon', bucket: 'language-logos', accept: 'image/jpeg,image/png,image/webp,image/svg+xml' }, SORT, PUB] },
   skills: { table: 'skills', label: 'Skills', title: r => r.name, sub: r => r.level + '%', order: ['sort_order', 'created_at'],
     fields: [{ k: 'name', t: 'text', l: 'Name', req: 1 }, { k: 'description', t: 'text', l: 'Description' }, { k: 'level', t: 'number', l: 'Level (0-100)', min: 0, max: 100 }, SORT, PUB] },
-  programs: { table: 'programs', label: 'Code Vault', select: '*, languages(name)', title: r => `${r.code_id} · ${r.title}`, sub: r => `${r.languages ? r.languages.name : ''} · ${r.difficulty}`, order: ['created_at'],
-    fields: [{ k: 'language_id', t: 'lang', l: 'Language', req: 1 }, { k: 'title', t: 'text', l: 'Title', req: 1 }, { k: 'description', t: 'textarea', l: 'Description' },
+  programs: { table: 'programs', label: 'Code Vault', select: '*, languages(name), projects(title), skills(name)', title: r => `${r.code_id} · ${r.title}`, sub: r => `${r.languages?.name || ''} · ${r.difficulty || ''} · ${r.link_type === 'project' ? (r.projects?.title || 'Project') : r.link_type === 'skill' ? (r.skills?.name || 'Skill') : 'Other'}`, order: ['created_at'],
+    fields: [{ k: 'language_id', t: 'lang', l: 'Language', req: 1 }, { k: 'link_type', t: 'linktype', l: 'Link To' }, { k: 'project_id', t: 'project', l: 'Linked Project' }, { k: 'skill_id', t: 'skill', l: 'Linked Skill' }, { k: 'title', t: 'text', l: 'Title', req: 1 }, { k: 'description', t: 'textarea', l: 'Description' },
       { k: 'difficulty', t: 'select', l: 'Difficulty', opts: ['easy', 'medium', 'hard'] }, { k: 'code', t: 'textarea', l: 'Code', cls: 'code' }, { k: 'output', t: 'textarea', l: 'Output' },
       { k: 'attachments', t: 'files', l: 'Attachments / downloadable files', bucket: 'program-files' }, PUB] }
 };
@@ -73,6 +73,19 @@ const upload = async (bucket, file) => {
 };
 const rmFiles = async (bucket, paths) => { paths = paths.filter(Boolean); if (paths.length) await sb.storage.from(bucket).remove(paths); };
 
+/* ---------- dropdown data ---------- */
+async function loadDropdownData() {
+  const [l, p, s] = await Promise.all([
+    sb.from('languages').select('id,name,prefix').order('name'),
+    sb.from('projects').select('id,title').order('title'),
+    sb.from('skills').select('id,name').order('name')
+  ]);
+  if (l.error || p.error || s.error) throw (l.error || p.error || s.error);
+  langs = l.data || [];
+  projects = p.data || [];
+  skills = s.data || [];
+}
+
 /* ---------- auth ---------- */
 async function gate() {
   $('#login').hidden = true; $('#app').hidden = true;
@@ -82,7 +95,8 @@ async function gate() {
   const { data, error } = await sb.from('admins').select('user_id').eq('user_id', session.user.id).maybeSingle();
   if (error || !data) { await sb.auth.signOut(); $('#login').hidden = false; msg('This account is not an administrator.', 1); return; }
   $('#who').textContent = session.user.email; $('#app').hidden = false;
-  const l = await sb.from('languages').select('id,name,prefix').order('name'); langs = l.data || [];
+  try { await loadDropdownData(); }
+  catch (e) { msg(e.message || 'Could not load dropdown data.', 1); return; }
   drawTabs(); show();
 }
 $('#go').onclick = async () => {
@@ -126,13 +140,26 @@ function form(E) {
     if (f.t === 'textarea') inp = `<textarea id="${id}" class="${f.cls || ''}">${esc(val)}</textarea>`;
     else if (f.t === 'select') inp = `<select id="${id}">${f.opts.map(o => `<option ${o === (val || 'easy') ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
     else if (f.t === 'lang') inp = `<select id="${id}" ${f.req ? 'required' : ''}><option value="">Choose…</option>${langs.map(l => `<option value="${l.id}" ${l.id === val ? 'selected' : ''}>${esc(l.name)} (${esc(l.prefix)})</option>`).join('')}</select>`;
+    else if (f.t === 'linktype') inp = `<select id="${id}"><option value="other" ${(val || 'other') === 'other' ? 'selected' : ''}>Other</option><option value="project" ${val === 'project' ? 'selected' : ''}>Project</option><option value="skill" ${val === 'skill' ? 'selected' : ''}>Skill</option></select>`;
+    else if (f.t === 'project') inp = `<select id="${id}"><option value="">Choose project…</option>${projects.map(p => `<option value="${p.id}" ${p.id === val ? 'selected' : ''}>${esc(p.title)}</option>`).join('')}</select>`;
+    else if (f.t === 'skill') inp = `<select id="${id}"><option value="">Choose skill…</option>${skills.map(s => `<option value="${s.id}" ${s.id === val ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>`;
     else if (f.t === 'file') inp = `${val ? `<div class="muted">Current: ${esc(val)} (choosing a new file replaces it)</div>` : ''}<input id="${id}" type="file" accept="${f.accept || ''}">`;
     else if (f.t === 'files') inp = `<div class="files" id="ex_${f.k}">${(val || []).map((x, i) => `<div><input type="checkbox" data-rm="${i}"> remove: ${esc(x.name)}</div>`).join('')}</div><input id="${id}" type="file" multiple>`;
     else inp = `<input id="${id}" type="${f.t === 'tags' ? 'text' : f.t}" value="${esc(f.t === 'tags' ? (val || []).join(', ') : (val ?? (f.t === 'number' ? (f.k === 'level' ? 50 : 0) : '')))}" ${f.req ? 'required' : ''} ${f.min != null ? `min="${f.min}" max="${f.max}"` : ''}>`;
-    return `<label for="${id}">${esc(f.l)}</label>${inp}`;
+    return `<div class="field-wrap" data-field="${f.k}"><label for="${id}">${esc(f.l)}</label>${inp}</div>`;
   }).join('');
   $('#view').innerHTML = `<div class="card"><h1>${isNew ? 'New' : 'Edit'} ${esc(E.label)}</h1>${!isNew && r.code_id ? `<p class="muted">Program ID: <strong>${esc(r.code_id)}</strong> (assigned automatically, cannot change)</p>` : ''}${html}
     <p><button class="gold" id="save" type="button">Save</button> <button id="cancel" type="button">Cancel</button></p></div>`;
+  const updateLinkFields = () => {
+    if (tab !== 'programs') return;
+    const type = $('#f_link_type')?.value || 'other';
+    $('[data-field="project_id"]').hidden = type !== 'project';
+    $('[data-field="skill_id"]').hidden = type !== 'skill';
+  };
+  if (tab === 'programs') {
+    $('#f_link_type').addEventListener('change', updateLinkFields);
+    updateLinkFields();
+  }
   $('#cancel').onclick = () => { editing = null; show(); };
   $('#save').onclick = async () => {
     const btn = $('#save'); btn.disabled = true; const newlyUploaded = [], removeAfter = [];
@@ -143,6 +170,8 @@ function form(E) {
         if (f.t === 'check') row[f.k] = el.checked;
         else if (f.t === 'number') row[f.k] = el.value === '' ? 0 : +el.value;
         else if (f.t === 'tags') row[f.k] = el.value.split(',').map(s => s.trim()).filter(Boolean);
+        else if (f.t === 'linktype') row[f.k] = el.value || 'other';
+        else if (f.t === 'project' || f.t === 'skill') row[f.k] = el.value || null;
         else if (f.t === 'file') {
           row[f.k] = r[f.k] || null;
           if (el.files[0]) { const p = await upload(f.bucket, el.files[0]); newlyUploaded.push([f.bucket, p]); if (r[f.k]) removeAfter.push([f.bucket, r[f.k]]); row[f.k] = p; }
@@ -153,11 +182,17 @@ function form(E) {
           row[f.k] = keep;
         } else { let v = el.value.trim(); if (f.upper) v = v.toUpperCase(); if (f.req && !v) throw new Error(`${f.l} is required.`); row[f.k] = v === '' && f.t === 'url' ? null : v; }
       }
+      if (row.link_type === 'project' && !row.project_id) throw new Error('Please select a project.');
+      if (row.link_type === 'skill' && !row.skill_id) throw new Error('Please select a skill.');
+      if (row.link_type !== 'project') row.project_id = null;
+      if (row.link_type !== 'skill') row.skill_id = null;
       if (row.url && !/^https?:\/\//i.test(row.url)) throw new Error('Link must start with http:// or https://');
       const { error } = isNew ? await sb.from(E.table).insert(row) : await sb.from(E.table).update(row).eq('id', r.id);
       if (error) throw error;
       for (const [b, p] of removeAfter) await rmFiles(b, [p]);
-      msg('Saved.'); editing = null; if (tab === 'languages') { const l = await sb.from('languages').select('id,name,prefix').order('name'); langs = l.data || []; } show();
+      msg('Saved.'); editing = null;
+      if (['languages', 'projects', 'skills'].includes(tab)) await loadDropdownData();
+      show();
     } catch (e) {
       for (const [b, p] of newlyUploaded) await rmFiles(b, [p]);
       msg(e.message || String(e), 1); btn.disabled = false;
