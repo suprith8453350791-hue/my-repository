@@ -992,6 +992,60 @@ nav.chart::-webkit-scrollbar { display: none; }
       "'": '&#39;'
     }[char]));
 
+
+  // Render the simple Markdown used in project descriptions.
+  // Escape all text before adding formatting tags to prevent HTML/script injection.
+  const renderDescription = value => {
+    const inline = text => esc(text)
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+    const lines = String(value ?? '').replace(/\r\n?/g, '\n').split('\n');
+    const output = [];
+    let paragraph = [];
+    let list = [];
+
+    const flushParagraph = () => {
+      if (paragraph.length) {
+        output.push(`<p>${paragraph.map(inline).join('<br>')}</p>`);
+        paragraph = [];
+      }
+    };
+    const flushList = () => {
+      if (list.length) {
+        output.push(`<ul>${list.map(item => `<li>${inline(item)}</li>`).join('')}</ul>`);
+        list = [];
+      }
+    };
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) {
+        flushParagraph();
+        flushList();
+        continue;
+      }
+      const heading = line.match(/^(#{1,4})\s+(.+)$/);
+      const bullet = line.match(/^[-*]\s+(.+)$/);
+      if (heading) {
+        flushParagraph();
+        flushList();
+        const level = Math.min(4, heading[1].length);
+        output.push(`<h${level}>${inline(heading[2])}</h${level}>`);
+      } else if (bullet) {
+        flushParagraph();
+        list.push(bullet[1]);
+      } else {
+        flushList();
+        paragraph.push(line);
+      }
+    }
+    flushParagraph();
+    flushList();
+    return output.join('');
+  };
+
   const safeUrl = value =>
     /^https?:\/\//i.test(value || '') ? value : '';
 
@@ -1115,6 +1169,75 @@ nav.chart::-webkit-scrollbar { display: none; }
     .item .go + .go {
       margin-left: 14px;
     }
+
+    /* Expandable project descriptions */
+    .project-description {
+      margin: 0 0 12px;
+      font-size: .94rem;
+      line-height: 1.7;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+
+    .project-description p {
+      margin: 0 0 12px;
+      color: var(--muted);
+    }
+
+    .project-description h1,
+    .project-description h2,
+    .project-description h3,
+    .project-description h4 {
+      margin: 18px 0 8px;
+      color: var(--fg);
+      font: 700 1.2rem/1.15 var(--display);
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .project-description h1 { font-size: 1.45rem; }
+    .project-description h2 { font-size: 1.3rem; }
+    .project-description ul {
+      margin: 4px 0 14px;
+      padding-left: 22px;
+    }
+    .project-description li { margin: 0 0 6px; padding-left: 3px; }
+    .project-description strong { color: var(--fg); font-weight: 600; }
+    .project-description code {
+      padding: 2px 5px;
+      border: 1px solid var(--line);
+      color: var(--foam);
+      font: .82em var(--mono);
+    }
+
+    .project-description.is-collapsed {
+      max-height: 10.5em;
+      overflow: hidden;
+    }
+
+    .project-expand {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      margin: 0 0 14px;
+      padding: 7px 0;
+      border: 0;
+      background: transparent;
+      color: var(--gold);
+      font: 500 .75rem/1.4 var(--mono);
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+
+    .project-expand:hover {
+      color: var(--foam);
+    }
+
+    .project-expand:focus-visible {
+      outline: 2px solid var(--gold);
+      outline-offset: 4px;
+    }
   `;
 
   document.head.appendChild(style);
@@ -1223,7 +1346,16 @@ nav.chart::-webkit-scrollbar { display: none; }
               `
               : ''}
 
-            <p>${esc(project.description)}</p>
+            ${project.description
+              ? `
+                <div class="project-description is-collapsed">${renderDescription(project.description)}</div>
+                <button
+                  class="project-expand"
+                  type="button"
+                  aria-expanded="false"
+                >View More ↓</button>
+              `
+              : ''}
 
             ${technologies.length
               ? `
@@ -1250,6 +1382,18 @@ nav.chart::-webkit-scrollbar { display: none; }
       }).join('');
 
       box.insertAdjacentHTML('beforeend', html);
+
+      // Expand or collapse long project descriptions without changing the card layout.
+      box.querySelectorAll('.project-expand').forEach(button => {
+        button.addEventListener('click', () => {
+          const description = button.previousElementSibling;
+          const expanded = button.getAttribute('aria-expanded') === 'true';
+
+          description.classList.toggle('is-collapsed', expanded);
+          button.setAttribute('aria-expanded', String(!expanded));
+          button.textContent = expanded ? 'View More ↓' : 'View Less ↑';
+        });
+      });
     }
 
     // ---------- CODE VAULT ----------
